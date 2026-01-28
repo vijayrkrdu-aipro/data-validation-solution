@@ -1,0 +1,90 @@
+# Database Connections Configuration
+#
+# This file defines database and file connections for the data validation solution.
+# You can reference environment variables using ${VAR_NAME} syntax.
+#
+# Create a .env file in the project root to store sensitive credentials:
+# Example .env file:
+#   SQLSERVER_USER=myuser
+#   SQLSERVER_PASS=mypassword
+#   ORACLE_USER=oracleuser
+#   ORACLE_PASS=oraclepass
+
+connections:
+  # SQL Server Connection Example
+  sqlserver_prod:
+    type: sqlserver
+    host: sqlserver.example.com
+    port: 1433
+    database: ProductionDB
+    # Option 1: Use environment variables (recommended)
+    username: ${SQLSERVER_USER}
+    password: ${SQLSERVER_PASS}
+    # Option 2: Direct credentials (not recommended for production)
+    # username: myuser
+    # password: mypassword
+    # Option 3: Custom connection string (overrides other settings)
+    # connection_string: "Driver={ODBC Driver 17 for SQL Server};Server=server,1433;Database=DB;UID=user;PWD=pass;"
+    # Optional: Specify ODBC driver (default: {ODBC Driver 17 for SQL Server})
+    # driver: "{ODBC Driver 18 for SQL Server}"
+
+  # Oracle Connection Example
+  oracle_dwh:
+    type: oracle
+    host: oracle.example.com
+    port: 1521
+    username: ${ORACLE_USER}
+    password: ${ORACLE_PASS}
+    # Oracle requires either service_name OR sid
+    service_name: ORCL
+    # OR use sid instead:
+    # sid: ORCL
+    # Optional: Custom connection string
+    # connection_string: "user/password@host:port/service_name"
+
+  # Netezza Connection Example
+  netezza_analytics:
+    type: netezza
+    host: netezza.example.com
+    port: 5480
+    database: ANALYTICS
+    username: ${NZ_USER}
+    password: ${NZ_PASS}
+    # Optional Netezza settings
+    securityLevel: 0
+    logLevel: 0
+
+  # Snowflake Connection Example
+  snowflake_cloud:
+    type: snowflake
+    account: xy12345.us-east-1  # Your Snowflake account identifier
+    username: ${SNOW_USER}
+    password: ${SNOW_PASS}
+    # Optional: Specify default database, schema, warehouse, role
+    database: PROD_DB
+    schema: PUBLIC
+    warehouse: COMPUTE_WH
+    role: SYSADMIN
+
+  # CSV File Connection Example
+  csv_source:
+    type: csv
+    file_path: C:\data\source_data.csv
+    # Optional CSV settings
+    encoding: utf-8
+    delimiter: ","
+
+  # Another SQL Server Connection (Example: Using Windows Authentication)
+  sqlserver_local:
+    type: sqlserver
+    host: localhost
+    port: 1433
+    database: TestDB
+    # For Windows Authentication, omit username and password
+    # The connector will use Trusted_Connection=yes
+
+# Notes:
+# 1. Connection names (e.g., 'sqlserver_prod') are used in the Excel validation config
+# 2. Environment variables are resolved at runtime from .env file or system environment
+# 3. For CSV files, the 'database' and 'schema' fields in Excel config are ignored
+# 4. Supported connection types: sqlserver, mssql, oracle, netezza, nz, snowflake, csv
