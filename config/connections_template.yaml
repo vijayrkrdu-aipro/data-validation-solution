@@ -28,7 +28,7 @@ connections:
     # Optional: Specify ODBC driver (default: {ODBC Driver 17 for SQL Server})
     # driver: "{ODBC Driver 18 for SQL Server}"
 
-  # Oracle Connection Example
+  # Oracle Connection Example (using pyodbc with Oracle ODBC driver)
   oracle_dwh:
     type: oracle
     host: oracle.example.com
@@ -39,8 +39,11 @@ connections:
     service_name: ORCL
     # OR use sid instead:
     # sid: ORCL
-    # Optional: Custom connection string
-    # connection_string: "user/password@host:port/service_name"
+    # Optional: Specify Oracle ODBC driver (default: {Oracle in OraClient12Home1})
+    # driver: "{Oracle in OraClient19Home1}"
+    # driver: "{Oracle in instantclient_19_8}"
+    # Optional: Custom connection string (overrides other settings)
+    # connection_string: "Driver={Oracle in OraClient12Home1};DBQ=host:1521/ORCL;UID=user;PWD=pass;"
 
   # Netezza Connection Example
   netezza_analytics:

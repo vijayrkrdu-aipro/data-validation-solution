@@ -316,8 +316,10 @@ Install Python 3.8+ from [python.org](https://www.python.org/downloads/) and ens
 - Download from: https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server
 
 **Oracle:**
-- Install Oracle Instant Client
-- Download from: https://www.oracle.com/database/technologies/instant-client.html
+- Install Oracle ODBC Driver (part of Oracle Instant Client)
+- Download Oracle Instant Client with ODBC: https://www.oracle.com/database/technologies/instant-client.html
+- After installing, configure the ODBC driver name in connections.yaml (e.g., `{Oracle in OraClient12Home1}`)
+- Common driver names: `{Oracle in instantclient_19_8}`, `{Oracle in OraClient19Home1}`
 
 **Netezza:**
 - `nzpy` should work out of the box
