@@ -9,7 +9,6 @@ from datetime import datetime
 import pandas as pd
 
 from .config_parser import ConfigParser
-from .connection_manager import ConnectionManager
 from .validator import Validator
 from .utils.logger import logger, setup_logger
 from .utils.exceptions import ValidationException
@@ -25,12 +24,6 @@ def parse_arguments():
         '--config',
         required=True,
         help='Path to Excel validation configuration file'
-    )
-
-    parser.add_argument(
-        '--connections',
-        required=True,
-        help='Path to YAML connections configuration file'
     )
 
     parser.add_argument(
@@ -50,36 +43,9 @@ def parse_arguments():
         help='Enable verbose logging'
     )
 
-    parser.add_argument(
-        '--test-connections',
-        action='store_true',
-        help='Test all connections and exit'
-    )
-
     return parser.parse_args()
 
 
-def test_connections(connection_manager: ConnectionManager):
-    """Test all configured connections."""
-    logger.info("Testing all connections...")
-    results = connection_manager.test_all_connections()
-
-    print("\n" + "=" * 60)
-    print("CONNECTION TEST RESULTS")
-    print("=" * 60)
-
-    all_passed = True
-    for conn_name, status in results.items():
-        status_str = "PASS" if status else "FAIL"
-        symbol = "✓" if status else "✗"
-        print(f"{symbol} {conn_name:30} {status_str}")
-        if not status:
-            all_passed = False
-
-    print("=" * 60)
-    print(f"\nTotal: {len(results)} | Passed: {sum(results.values())} | Failed: {len(results) - sum(results.values())}")
-
-    return all_passed
 
 
 def generate_output_path(custom_path: str = None) -> str:
@@ -175,15 +141,6 @@ def main():
         print("DATA VALIDATION SOLUTION")
         print("=" * 60)
 
-        # Initialize connection manager
-        logger.info(f"Loading connections from: {args.connections}")
-        connection_manager = ConnectionManager(args.connections)
-
-        # Test connections if requested
-        if args.test_connections:
-            all_passed = test_connections(connection_manager)
-            sys.exit(0 if all_passed else 1)
-
         # Parse validation configurations
         logger.info(f"Loading validation config from: {args.config}")
         config_parser = ConfigParser(args.config, args.sheet)
@@ -196,7 +153,7 @@ def main():
         print(f"\nFound {len(validations)} validation(s) to execute\n")
 
         # Initialize validator
-        validator = Validator(connection_manager)
+        validator = Validator()
 
         # Execute validations
         results = []

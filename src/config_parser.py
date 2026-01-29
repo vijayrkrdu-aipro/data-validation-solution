@@ -14,51 +14,53 @@ class ValidationConfig:
     """Configuration for a single validation rule."""
     validation_id: str
     validation_name: str
-    source_connection: str
-    source_database: Optional[str]
+    # Source details
+    source_type: str  # Database type (SQLServer, Oracle, Netezza, etc.)
+    source_host: str
+    source_port: int
+    source_database: str
     source_schema: Optional[str]
     source_table: str
     source_column: Optional[str]
+    source_column_expression: Optional[str]  # Custom expression for source column
     source_filter: Optional[str]
-    target_connection: str
-    target_database: Optional[str]
+    # Target details
+    target_type: str  # Database type
+    target_host: str
+    target_port: int
+    target_database: str
     target_schema: Optional[str]
     target_table: str
     target_column: Optional[str]
+    target_column_expression: Optional[str]  # Custom expression for target column
     target_filter: Optional[str]
+    # Validation rules
     rule_type: str
-    custom_expression: Optional[str]
-    threshold_type: str
-    threshold_value: float
+    threshold_type: str = 'EXACT'
+    threshold_value: float = 0.0
     enabled: bool = True
 
 
 class ConfigParser:
-    """Parser for Excel validation configuration files."""
+    """Parser for Excel validation configuration files with vertical layout."""
 
-    REQUIRED_COLUMNS = [
-        'validation_id',
-        'validation_name',
-        'source_connection',
-        'source_table',
-        'target_connection',
-        'target_table',
-        'rule_type',
-        'threshold_type',
-        'threshold_value',
-    ]
-
-    OPTIONAL_COLUMNS = [
-        'source_database',
-        'source_schema',
-        'source_column',
-        'source_filter',
-        'target_database',
-        'target_schema',
-        'target_column',
-        'target_filter',
-        'custom_expression',
-        'enabled',
+    # Expected row labels in Excel (case-insensitive)
+    REQUIRED_ROWS = [
+        'Validation Name',
+        'Validation_id',
+        'Source Type',
+        'Source Host Name',
+        'Source Port',
+        'Source Database Name',
+        'Source Schema Name',
+        'Source Table Name',
+        'Target Type',
+        'Target Host Name',
+        'Target Port',
+        'Target Database Name',
+        'Target Schema Name',
+        'Target Table Name',
+        'Rule Type',
     ]
 
     def __init__(self, excel_path: str, sheet_name: str = 'Validations'):
@@ -74,7 +76,11 @@ class ConfigParser:
 
     def parse(self) -> List[ValidationConfig]:
         """
-        Parse Excel file and return list of validation configurations.
+        Parse Excel file with vertical layout (rows are fields, columns are validations).
+
+        Expected format:
+        Column A: Field names (Validation Name, Source Type, etc.)
+        Column B+: Validation data (each column is one validation)
 
         Returns:
             List of ValidationConfig objects
@@ -83,26 +89,31 @@ class ConfigParser:
             ConfigurationException: If parsing fails or validation errors occur
         """
         try:
-            # Read Excel file
-            df = pd.read_excel(self.excel_path, sheet_name=self.sheet_name)
+            # Read Excel file without treating first row as header
+            df = pd.read_excel(self.excel_path, sheet_name=self.sheet_name, header=None)
             logger.info(f"Loaded Excel file: {self.excel_path} (sheet: {self.sheet_name})")
 
-            # Validate required columns
-            missing_cols = set(self.REQUIRED_COLUMNS) - set(df.columns)
-            if missing_cols:
-                raise ConfigurationException(
-                    f"Missing required columns in Excel file: {missing_cols}"
-                )
+            if df.empty or df.shape[0] < 2 or df.shape[1] < 2:
+                raise ConfigurationException("Excel file must have at least 2 rows and 2 columns")
 
-            # Parse each row
+            # First column contains field names
+            field_names = df.iloc[:, 0].tolist()
+
+            # Create a mapping of field names to row indices (case-insensitive)
+            field_map = {}
+            for idx, field in enumerate(field_names):
+                if pd.notna(field):
+                    field_map[str(field).strip().lower()] = idx
+
+            # Parse each validation (each column starting from column 1)
             validations = []
-            for idx, row in df.iterrows():
+            for col_idx in range(1, df.shape[1]):
                 try:
-                    validation = self._parse_row(row, idx)
+                    validation = self._parse_column(df, col_idx, field_map)
                     if validation:
                         validations.append(validation)
                 except Exception as e:
-                    logger.warning(f"Skipping row {idx + 2}: {str(e)}")
+                    logger.warning(f"Skipping column {col_idx + 1}: {str(e)}")
 
             logger.info(f"Parsed {len(validations)} validation configurations")
             return validations
@@ -112,44 +123,66 @@ class ConfigParser:
         except Exception as e:
             raise ConfigurationException(f"Failed to parse Excel file: {str(e)}")
 
-    def _parse_row(self, row: pd.Series, row_idx: int) -> Optional[ValidationConfig]:
+    def _parse_column(self, df: pd.DataFrame, col_idx: int, field_map: dict) -> Optional[ValidationConfig]:
         """
-        Parse a single row into a ValidationConfig object.
+        Parse a single column into a ValidationConfig object.
 
         Args:
-            row: Pandas Series representing a row
-            row_idx: Row index for error reporting
+            df: DataFrame containing all data
+            col_idx: Column index to parse
+            field_map: Mapping of field names (lowercase) to row indices
 
         Returns:
-            ValidationConfig object or None if row should be skipped
+            ValidationConfig object or None if column should be skipped
         """
-        # Check if enabled (default to True if not specified)
-        enabled = self._get_bool_value(row, 'enabled', default=True)
-        if not enabled:
-            logger.info(f"Skipping disabled validation: {row.get('validation_id', f'row {row_idx + 2}')}")
-            return None
+        def get_value(field_name: str, required: bool = False, default=None):
+            """Get value for a field from the current column."""
+            field_key = field_name.lower()
+            if field_key not in field_map:
+                if required:
+                    raise ConfigurationException(f"Required field '{field_name}' not found in Excel")
+                return default
+
+            row_idx = field_map[field_key]
+            value = df.iloc[row_idx, col_idx]
+
+            if pd.isna(value) or (isinstance(value, str) and not value.strip()):
+                if required:
+                    raise ConfigurationException(f"Required field '{field_name}' is empty")
+                return default
+
+            return value
 
         # Parse required fields
-        validation_id = self._get_string_value(row, 'validation_id', required=True)
-        validation_name = self._get_string_value(row, 'validation_name', required=True)
-        source_connection = self._get_string_value(row, 'source_connection', required=True)
-        source_table = self._get_string_value(row, 'source_table', required=True)
-        target_connection = self._get_string_value(row, 'target_connection', required=True)
-        target_table = self._get_string_value(row, 'target_table', required=True)
-        rule_type = self._get_string_value(row, 'rule_type', required=True).upper()
-        threshold_type = self._get_string_value(row, 'threshold_type', required=True).upper()
-        threshold_value = self._get_float_value(row, 'threshold_value', required=True)
+        validation_name = str(get_value('validation name', required=True)).strip()
+        validation_id = str(get_value('validation_id', required=True)).strip()
 
-        # Parse optional fields
-        source_database = self._get_string_value(row, 'source_database')
-        source_schema = self._get_string_value(row, 'source_schema')
-        source_column = self._get_string_value(row, 'source_column')
-        source_filter = self._get_string_value(row, 'source_filter')
-        target_database = self._get_string_value(row, 'target_database')
-        target_schema = self._get_string_value(row, 'target_schema')
-        target_column = self._get_string_value(row, 'target_column')
-        target_filter = self._get_string_value(row, 'target_filter')
-        custom_expression = self._get_string_value(row, 'custom_expression')
+        # Source details
+        source_type = str(get_value('source type', required=True)).strip()
+        source_host = str(get_value('source host name', required=True)).strip()
+        source_port = int(get_value('source port', required=True))
+        source_database = str(get_value('source database name', required=True)).strip()
+        source_schema = str(get_value('source schema name', default='')).strip() or None
+        source_table = str(get_value('source table name', required=True)).strip()
+        source_column = str(get_value('source column name', default='')).strip() or None
+        source_column_expr = str(get_value('source column expression', default='')).strip() or None
+        source_filter = str(get_value('source filter', default='')).strip() or None
+
+        # Target details
+        target_type = str(get_value('target type', required=True)).strip()
+        target_host = str(get_value('target host name', required=True)).strip()
+        target_port = int(get_value('target port', required=True))
+        target_database = str(get_value('target database name', required=True)).strip()
+        target_schema = str(get_value('target schema name', default='')).strip() or None
+        target_table = str(get_value('target table name', required=True)).strip()
+        target_column = str(get_value('target column name', default='')).strip() or None
+        target_column_expr = str(get_value('target column expression', default='')).strip() or None
+        target_filter = str(get_value('target filter', default='')).strip() or None
+
+        # Validation rules
+        rule_type = str(get_value('rule type', required=True)).strip().upper()
+        threshold_type = str(get_value('threshold type', default='EXACT')).strip().upper()
+        threshold_value = float(get_value('threshold value', default=0.0))
 
         # Validate threshold type
         if threshold_type not in ['EXACT', 'PERCENTAGE', 'ABSOLUTE']:
@@ -162,76 +195,26 @@ class ConfigParser:
         return ValidationConfig(
             validation_id=validation_id,
             validation_name=validation_name,
-            source_connection=source_connection,
+            source_type=source_type,
+            source_host=source_host,
+            source_port=source_port,
             source_database=source_database,
             source_schema=source_schema,
             source_table=source_table,
             source_column=source_column,
+            source_column_expression=source_column_expr,
             source_filter=source_filter,
-            target_connection=target_connection,
+            target_type=target_type,
+            target_host=target_host,
+            target_port=target_port,
             target_database=target_database,
             target_schema=target_schema,
             target_table=target_table,
             target_column=target_column,
+            target_column_expression=target_column_expr,
             target_filter=target_filter,
             rule_type=rule_type,
-            custom_expression=custom_expression,
             threshold_type=threshold_type,
-            threshold_value=threshold_value,
-            enabled=enabled
+            threshold_value=threshold_value
         )
 
-    @staticmethod
-    def _get_string_value(row: pd.Series, column: str, required: bool = False) -> Optional[str]:
-        """Get string value from row, handling NaN and empty strings."""
-        if column not in row or pd.isna(row[column]):
-            if required:
-                raise ConfigurationException(f"Required column '{column}' is missing or empty")
-            return None
-
-        value = str(row[column]).strip()
-        if not value and required:
-            raise ConfigurationException(f"Required column '{column}' is empty")
-
-        return value if value else None
-
-    @staticmethod
-    def _get_float_value(row: pd.Series, column: str, required: bool = False) -> Optional[float]:
-        """Get float value from row, handling NaN."""
-        if column not in row or pd.isna(row[column]):
-            if required:
-                raise ConfigurationException(f"Required column '{column}' is missing or empty")
-            return None
-
-        try:
-            return float(row[column])
-        except (ValueError, TypeError):
-            if required:
-                raise ConfigurationException(f"Column '{column}' must be a number")
-            return None
-
-    @staticmethod
-    def _get_bool_value(row: pd.Series, column: str, default: bool = False) -> bool:
-        """Get boolean value from row, handling various representations."""
-        if column not in row or pd.isna(row[column]):
-            return default
-
-        value = row[column]
-
-        # Handle boolean type
-        if isinstance(value, bool):
-            return value
-
-        # Handle string representations
-        if isinstance(value, str):
-            value_lower = value.strip().lower()
-            if value_lower in ['true', 'yes', '1', 't', 'y']:
-                return True
-            elif value_lower in ['false', 'no', '0', 'f', 'n']:
-                return False
-
-        # Handle numeric representations
-        try:
-            return bool(int(value))
-        except (ValueError, TypeError):
-            return default

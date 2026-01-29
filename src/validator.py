@@ -6,9 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 from .config_parser import ValidationConfig
-from .connection_manager import ConnectionManager
 from .query_builder import QueryBuilder
-from .utils.exceptions import ValidationException
+from .connectors.sqlserver_connector import SQLServerConnector
+from .connectors.oracle_connector import OracleConnector
+from .connectors.netezza_connector import NetezzaConnector
+from .connectors.snowflake_connector import SnowflakeConnector
+from .connectors.csv_connector import CSVConnector
+from .utils.exceptions import ValidationException, ConfigurationException
 from .utils.logger import logger
 
 
@@ -36,14 +40,55 @@ class ValidationResult:
 class Validator:
     """Core validation engine."""
 
-    def __init__(self, connection_manager: ConnectionManager):
+    # Connector type mapping
+    CONNECTOR_MAP = {
+        'sqlserver': SQLServerConnector,
+        'mssql': SQLServerConnector,
+        'oracle': OracleConnector,
+        'netezza': NetezzaConnector,
+        'nz': NetezzaConnector,
+        'snowflake': SnowflakeConnector,
+        'csv': CSVConnector,
+    }
+
+    def __init__(self):
+        """Initialize validator."""
+        pass
+
+    def _create_connector(self, db_type: str, host: str, port: int, database: str, **kwargs):
         """
-        Initialize validator.
+        Create a connector instance from connection details.
 
         Args:
-            connection_manager: ConnectionManager instance for database connections
+            db_type: Database type (SQLServer, Oracle, etc.)
+            host: Host name
+            port: Port number
+            database: Database name
+            **kwargs: Additional connection parameters
+
+        Returns:
+            Connector instance
         """
-        self.connection_manager = connection_manager
+        db_type_lower = db_type.lower().replace(' ', '')
+
+        if db_type_lower not in self.CONNECTOR_MAP:
+            raise ConfigurationException(
+                f"Unknown database type '{db_type}'. "
+                f"Supported types: {list(self.CONNECTOR_MAP.keys())}"
+            )
+
+        # Build connection config
+        config = {
+            'type': db_type_lower,
+            'host': host,
+            'port': port,
+            'database': database,
+            **kwargs
+        }
+
+        # Get connector class and create instance
+        connector_class = self.CONNECTOR_MAP[db_type_lower]
+        return connector_class(config)
 
     def validate(self, config: ValidationConfig) -> ValidationResult:
         """
@@ -61,13 +106,24 @@ class Validator:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         try:
-            # Get connectors
-            source_connector = self.connection_manager.get_connector(config.source_connection)
-            target_connector = self.connection_manager.get_connector(config.target_connection)
+            # Create connectors from config details
+            source_connector = self._create_connector(
+                db_type=config.source_type,
+                host=config.source_host,
+                port=config.source_port,
+                database=config.source_database
+            )
+
+            target_connector = self._create_connector(
+                db_type=config.target_type,
+                host=config.target_host,
+                port=config.target_port,
+                database=config.target_database
+            )
 
             # Build source details
             source_details = self._build_details(
-                config.source_connection,
+                f"{config.source_type}@{config.source_host}:{config.source_port}",
                 config.source_database,
                 config.source_schema,
                 config.source_table
@@ -75,11 +131,17 @@ class Validator:
 
             # Build target details
             target_details = self._build_details(
-                config.target_connection,
+                f"{config.target_type}@{config.target_host}:{config.target_port}",
                 config.target_database,
                 config.target_schema,
                 config.target_table
             )
+
+            # Determine which column/expression to use for source
+            source_column_or_expr = config.source_column_expression or config.source_column
+
+            # Determine which column/expression to use for target
+            target_column_or_expr = config.target_column_expression or config.target_column
 
             # Execute source query
             with source_connector as conn:
@@ -88,9 +150,9 @@ class Validator:
                     database=config.source_database,
                     schema=config.source_schema,
                     table=config.source_table,
-                    column=config.source_column,
+                    column=source_column_or_expr,
                     rule_type=config.rule_type,
-                    custom_expression=config.custom_expression,
+                    custom_expression=config.source_column_expression,
                     filter_clause=config.source_filter
                 )
                 logger.debug(f"Source query: {source_query}")
@@ -103,9 +165,9 @@ class Validator:
                     database=config.target_database,
                     schema=config.target_schema,
                     table=config.target_table,
-                    column=config.target_column,
+                    column=target_column_or_expr,
                     rule_type=config.rule_type,
-                    custom_expression=config.custom_expression,
+                    custom_expression=config.target_column_expression,
                     filter_clause=config.target_filter
                 )
                 logger.debug(f"Target query: {target_query}")

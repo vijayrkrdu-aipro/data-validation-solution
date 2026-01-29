@@ -22,33 +22,24 @@ set "timestamp=%dt:~0,4%%dt:~4,2%%dt:~6,2%_%dt:~8,2%%dt:~10,2%%dt:~12,2%"
 
 REM Set paths
 set "CONFIG_FILE=examples\validation_template.xlsx"
-set "CONNECTIONS_FILE=config\connections.yaml"
 set "OUTPUT_FILE=output\validation_report_%timestamp%.csv"
 
-REM Check if config files exist
+REM Check if config file exists
 if not exist "%CONFIG_FILE%" (
     echo ERROR: Validation config file not found: %CONFIG_FILE%
     echo Please create the Excel configuration file first
-    pause
-    exit /b 1
-)
-
-if not exist "%CONNECTIONS_FILE%" (
-    echo ERROR: Connections config file not found: %CONNECTIONS_FILE%
-    echo Please create the connections.yaml file first
-    echo You can copy from config\connections_template.yaml
+    echo Run: python create_excel_template.py
     pause
     exit /b 1
 )
 
 echo Running validation...
 echo Config: %CONFIG_FILE%
-echo Connections: %CONNECTIONS_FILE%
 echo Output: %OUTPUT_FILE%
 echo.
 
 REM Run the validation
-python -m src.main --config "%CONFIG_FILE%" --connections "%CONNECTIONS_FILE%" --output "%OUTPUT_FILE%"
+python -m src.main --config "%CONFIG_FILE%" --output "%OUTPUT_FILE%"
 
 REM Check exit code
 if errorlevel 1 (
