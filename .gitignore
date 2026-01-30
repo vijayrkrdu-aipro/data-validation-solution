@@ -30,9 +30,13 @@ wheels/
 *.swo
 *~
 
-# Environment
+# Environment files with credentials
 .env
 .env.local
+.env.*
+
+# But keep example .env files
+!.env.example-*
 
 # Configuration (contains credentials)
 config/connections.yaml

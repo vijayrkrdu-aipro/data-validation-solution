@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Optional
 from .config_parser import ValidationConfig
 from .query_builder import QueryBuilder
+from .env_manager import EnvManager
 from .connectors.sqlserver_connector import SQLServerConnector
 from .connectors.oracle_connector import OracleConnector
 from .connectors.netezza_connector import NetezzaConnector
@@ -51,20 +52,27 @@ class Validator:
         'csv': CSVConnector,
     }
 
-    def __init__(self):
-        """Initialize validator."""
-        pass
+    def __init__(self, env_dir: str = None):
+        """
+        Initialize validator.
 
-    def _create_connector(self, db_type: str, host: str, port: int, database: str, **kwargs):
+        Args:
+            env_dir: Directory containing .env files (default: project root)
+        """
+        self.env_manager = EnvManager(env_dir)
+
+    def _create_connector(self, db_type: str, host_identifier: str, port: int, database: str, schema: Optional[str] = None):
         """
         Create a connector instance from connection details.
 
+        Loads credentials from .env.{host_identifier} file.
+
         Args:
             db_type: Database type (SQLServer, Oracle, etc.)
-            host: Host name
-            port: Port number
-            database: Database name
-            **kwargs: Additional connection parameters
+            host_identifier: Host identifier from Excel (e.g., 'nz-prod-01', 'p8054')
+            port: Port number from Excel (may be overridden by .env file)
+            database: Database name from Excel
+            schema: Schema name from Excel (optional)
 
         Returns:
             Connector instance
@@ -77,14 +85,43 @@ class Validator:
                 f"Supported types: {list(self.CONNECTOR_MAP.keys())}"
             )
 
+        # Load credentials from .env.{host_identifier} file
+        credentials = self.env_manager.get_credentials(host_identifier)
+
         # Build connection config
+        # Priority: .env file values > Excel values
         config = {
             'type': db_type_lower,
-            'host': host,
-            'port': port,
-            'database': database,
-            **kwargs
+            'host': credentials.get('HOSTNAME', host_identifier),  # Use full hostname from .env
+            'port': int(credentials.get('PORT', port)),  # Use port from .env if provided, else Excel
+            'database': credentials.get('DATABASE', database),  # Use database from .env if provided, else Excel
+            'username': credentials['USERNAME'],  # Required from .env
+            'password': credentials['PASSWORD'],  # Required from .env
         }
+
+        # Add optional database-specific parameters from .env
+        if 'SCHEMA' in credentials:
+            config['schema'] = credentials['SCHEMA']
+        elif schema:
+            config['schema'] = schema
+
+        # Oracle-specific
+        if db_type_lower == 'oracle':
+            if 'SERVICE_NAME' in credentials:
+                config['service_name'] = credentials['SERVICE_NAME']
+            if 'SID' in credentials:
+                config['sid'] = credentials['SID']
+            if 'DRIVER' in credentials:
+                config['driver'] = credentials['DRIVER']
+
+        # Snowflake-specific
+        if db_type_lower == 'snowflake':
+            if 'ACCOUNT' in credentials:
+                config['account'] = credentials['ACCOUNT']
+            if 'WAREHOUSE' in credentials:
+                config['warehouse'] = credentials['WAREHOUSE']
+            if 'ROLE' in credentials:
+                config['role'] = credentials['ROLE']
 
         # Get connector class and create instance
         connector_class = self.CONNECTOR_MAP[db_type_lower]
@@ -107,18 +144,21 @@ class Validator:
 
         try:
             # Create connectors from config details
+            # host_identifier is used to lookup .env.{host_identifier} file
             source_connector = self._create_connector(
                 db_type=config.source_type,
-                host=config.source_host,
+                host_identifier=config.source_host,
                 port=config.source_port,
-                database=config.source_database
+                database=config.source_database,
+                schema=config.source_schema
             )
 
             target_connector = self._create_connector(
                 db_type=config.target_type,
-                host=config.target_host,
+                host_identifier=config.target_host,
                 port=config.target_port,
-                database=config.target_database
+                database=config.target_database,
+                schema=config.target_schema
             )
 
             # Build source details
