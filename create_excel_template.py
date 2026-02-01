@@ -1,17 +1,23 @@
 """
 Script to create Excel validation template with vertical layout.
 Each validation is a column, field names are in rows.
+
+IMPORTANT: The "Source Host Name" and "Target Host Name" fields should contain
+SHORT IDENTIFIERS that match your .env file names, NOT full hostnames.
+
+Example: If you have .env.p8054, use "p8054" as the Host Name in Excel.
+The actual full hostname will be loaded from the .env file.
 """
 
 import pandas as pd
 import os
 
-# Field names (rows)
+# Field names (rows) - must match what config_parser.py expects
 fields = [
     'Validation Name',
     'Validation_id',
     'Source Type',
-    'Source Host Name',
+    'Source Host Name',              # SHORT identifier for .env file lookup
     'Source Port',
     'Source Database Name',
     'Source Schema Name',
@@ -20,7 +26,7 @@ fields = [
     'Source Column Expression',
     'Source Filter',
     'Target Type',
-    'Target Host Name',
+    'Target Host Name',              # SHORT identifier for .env file lookup
     'Target Port',
     'Target Database Name',
     'Target Schema Name',
@@ -34,12 +40,13 @@ fields = [
 ]
 
 # Example validations (columns)
+# Note: Host names are SHORT identifiers matching .env file names
 validation1 = [
     'Daily Order Count',                    # Validation Name
     'VAL001',                               # Validation_id
     'SQLServer',                            # Source Type
-    'sqlserver.example.com',                # Source Host Name
-    1433,                                   # Source Port
+    'p8054',                                # Source Host Name (matches .env.p8054)
+    3085,                                   # Source Port
     'OrderDB',                              # Source Database Name
     'dbo',                                  # Source Schema Name
     'Orders',                               # Source Table Name
@@ -47,7 +54,7 @@ validation1 = [
     '',                                     # Source Column Expression
     "order_date >= '2024-01-01'",          # Source Filter
     'Snowflake',                            # Target Type
-    'xy12345.us-east-1.snowflakecomputing.com',  # Target Host Name
+    'snowflake-prod',                       # Target Host Name (matches .env.snowflake-prod)
     443,                                    # Target Port
     'ANALYTICS',                            # Target Database Name
     'PUBLIC',                               # Target Schema Name
@@ -64,7 +71,7 @@ validation2 = [
     'Total Sales Amount',
     'VAL002',
     'Oracle',
-    'oracle.example.com',
+    'oracle-dwh',                           # matches .env.oracle-dwh
     1521,
     'SALES_DB',
     'SALES',
@@ -73,7 +80,7 @@ validation2 = [
     '',
     'TRANSACTION_DATE >= TO_DATE(\'2024-01-01\', \'YYYY-MM-DD\')',
     'Snowflake',
-    'xy12345.us-east-1.snowflakecomputing.com',
+    'snowflake-prod',                       # matches .env.snowflake-prod
     443,
     'ANALYTICS',
     'SALES',
@@ -90,16 +97,16 @@ validation3 = [
     'Distinct Product Count',
     'VAL003',
     'Netezza',
-    'nz-db-ut',
+    'nz-db-ut',                             # matches .env.nz-db-ut
     5480,
-    'PRODUCTION',
-    'PRODUCT',
+    'cidpr',
+    'stgprd',
     'PRODUCT_MASTER',
     'PRODUCT_ID',
     '',
     'IS_ACTIVE = TRUE',
     'SQLServer',
-    'p8054',
+    'p8054',                                # matches .env.p8054
     3085,
     'BDM Archive',
     'dbo',
@@ -116,7 +123,7 @@ validation4 = [
     'Average Order Value',
     'VAL004',
     'SQLServer',
-    'p8054',
+    'p8054',                                # matches .env.p8054
     3085,
     'OrderDB',
     'dbo',
@@ -124,11 +131,11 @@ validation4 = [
     'ORDER_TOTAL',
     '',
     '',
-    'Snowflake',
-    'xy12345.us-east-1.snowflakecomputing.com',
-    443,
-    'ANALYTICS',
-    'SALES',
+    'Netezza',
+    'nz-db-ut',                             # matches .env.nz-db-ut
+    5480,
+    'cidpr',
+    'stgprd',
     'ORDERS',
     'ORDER_TOTAL',
     '',
@@ -142,22 +149,22 @@ validation5 = [
     'Custom Revenue Calculation',
     'VAL005',
     'SQLServer',
-    'p8054',
+    'p8054',                                # matches .env.p8054
     3085,
     'SalesDB',
     'dbo',
     'Sales',
     '',
-    'Price * Quantity',  # Custom source expression
+    'Price * Quantity',                     # Custom source expression
     "REGION = 'WEST'",
     'Netezza',
-    'nz-db-ut',
+    'nz-db-ut',                             # matches .env.nz-db-ut
     5480,
     'cidpr',
     'stgprd',
     'Sales_Fact',
     '',
-    'Price * Quantity',  # Custom target expression
+    'Price * Quantity',                     # Custom target expression
     "REGION = 'WEST'",
     'SUM',
     'PERCENTAGE',
@@ -188,7 +195,17 @@ output_path = os.path.join(output_dir, 'validation_template.xlsx')
 with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
     df.to_excel(writer, sheet_name='Validations', index=False, header=False)
 
-print(f"Excel template created successfully: {output_path}")
-print(f"Total validations: 5")
+print(f"[OK] Excel template created successfully: {output_path}")
+print(f"[OK] Total validations: 5")
 print(f"\nLayout: Vertical (rows are fields, columns are validations)")
 print(f"Each validation is in a separate column")
+print(f"\n" + "="*60)
+print("IMPORTANT: Host-Specific .env Files Required")
+print("="*60)
+print("\nBased on the template, you need to create these .env files:")
+print("  - .env.p8054           (SQL Server)")
+print("  - .env.oracle-dwh      (Oracle)")
+print("  - .env.nz-db-ut        (Netezza)")
+print("  - .env.snowflake-prod  (Snowflake)")
+print(f"\nSee CREDENTIALS_GUIDE.md for detailed setup instructions.")
+print(f"Use the .env.example-* files as templates.")

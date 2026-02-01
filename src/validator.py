@@ -11,10 +11,17 @@ from .env_manager import EnvManager
 from .connectors.sqlserver_connector import SQLServerConnector
 from .connectors.oracle_connector import OracleConnector
 from .connectors.netezza_connector import NetezzaConnector
-from .connectors.snowflake_connector import SnowflakeConnector
 from .connectors.csv_connector import CSVConnector
 from .utils.exceptions import ValidationException, ConfigurationException
 from .utils.logger import logger
+
+# Snowflake is optional - only import if available
+try:
+    from .connectors.snowflake_connector import SnowflakeConnector
+    SNOWFLAKE_AVAILABLE = True
+except ImportError:
+    SNOWFLAKE_AVAILABLE = False
+    logger.warning("Snowflake connector not available. Install with: pip install snowflake-connector-python")
 
 
 @dataclass
@@ -41,17 +48,6 @@ class ValidationResult:
 class Validator:
     """Core validation engine."""
 
-    # Connector type mapping
-    CONNECTOR_MAP = {
-        'sqlserver': SQLServerConnector,
-        'mssql': SQLServerConnector,
-        'oracle': OracleConnector,
-        'netezza': NetezzaConnector,
-        'nz': NetezzaConnector,
-        'snowflake': SnowflakeConnector,
-        'csv': CSVConnector,
-    }
-
     def __init__(self, env_dir: str = None):
         """
         Initialize validator.
@@ -60,6 +56,20 @@ class Validator:
             env_dir: Directory containing .env files (default: project root)
         """
         self.env_manager = EnvManager(env_dir)
+
+        # Connector type mapping - build dynamically to handle optional Snowflake
+        self.CONNECTOR_MAP = {
+            'sqlserver': SQLServerConnector,
+            'mssql': SQLServerConnector,
+            'oracle': OracleConnector,
+            'netezza': NetezzaConnector,
+            'nz': NetezzaConnector,
+            'csv': CSVConnector,
+        }
+
+        # Add Snowflake only if available
+        if SNOWFLAKE_AVAILABLE:
+            self.CONNECTOR_MAP['snowflake'] = SnowflakeConnector
 
     def _create_connector(self, db_type: str, host_identifier: str, port: int, database: str, schema: Optional[str] = None):
         """
