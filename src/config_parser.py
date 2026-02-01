@@ -16,8 +16,8 @@ class ValidationConfig:
     validation_name: str
     # Source details
     source_type: str  # Database type (SQLServer, Oracle, Netezza, etc.)
-    source_host: str
-    source_port: int
+    source_host: str  # Host identifier for .env file lookup
+    source_port: Optional[int]  # Optional - loaded from .env file if not provided
     source_database: str
     source_schema: Optional[str]
     source_table: str
@@ -26,8 +26,8 @@ class ValidationConfig:
     source_filter: Optional[str]
     # Target details
     target_type: str  # Database type
-    target_host: str
-    target_port: int
+    target_host: str  # Host identifier for .env file lookup
+    target_port: Optional[int]  # Optional - loaded from .env file if not provided
     target_database: str
     target_schema: Optional[str]
     target_table: str
@@ -160,7 +160,8 @@ class ConfigParser:
         # Source details
         source_type = str(get_value('source type', required=True)).strip()
         source_host = str(get_value('source host name', required=True)).strip()
-        source_port = int(get_value('source port', required=True))
+        source_port_val = get_value('source port', default=None)
+        source_port = int(source_port_val) if source_port_val is not None else None
         source_database = str(get_value('source database name', required=True)).strip()
         source_schema = str(get_value('source schema name', default='')).strip() or None
         source_table = str(get_value('source table name', required=True)).strip()
@@ -171,7 +172,8 @@ class ConfigParser:
         # Target details
         target_type = str(get_value('target type', required=True)).strip()
         target_host = str(get_value('target host name', required=True)).strip()
-        target_port = int(get_value('target port', required=True))
+        target_port_val = get_value('target port', default=None)
+        target_port = int(target_port_val) if target_port_val is not None else None
         target_database = str(get_value('target database name', required=True)).strip()
         target_schema = str(get_value('target schema name', default='')).strip() or None
         target_table = str(get_value('target table name', required=True)).strip()

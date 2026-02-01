@@ -6,19 +6,20 @@ IMPORTANT: The "Source Host Name" and "Target Host Name" fields should contain
 SHORT IDENTIFIERS that match your .env file names, NOT full hostnames.
 
 Example: If you have .env.p8054, use "p8054" as the Host Name in Excel.
-The actual full hostname will be loaded from the .env file.
+The actual full hostname and port will be loaded from the .env file.
+
+NOTE: Port and Database can be optionally specified in Excel to override .env values.
 """
 
 import pandas as pd
 import os
 
-# Field names (rows) - must match what config_parser.py expects
+# Field names (rows) - NO PORT FIELDS (ports come from .env files)
 fields = [
     'Validation Name',
     'Validation_id',
     'Source Type',
     'Source Host Name',              # SHORT identifier for .env file lookup
-    'Source Port',
     'Source Database Name',
     'Source Schema Name',
     'Source Table Name',
@@ -27,7 +28,6 @@ fields = [
     'Source Filter',
     'Target Type',
     'Target Host Name',              # SHORT identifier for .env file lookup
-    'Target Port',
     'Target Database Name',
     'Target Schema Name',
     'Target Table Name',
@@ -41,12 +41,12 @@ fields = [
 
 # Example validations (columns)
 # Note: Host names are SHORT identifiers matching .env file names
+# Port is loaded from .env file automatically
 validation1 = [
     'Daily Order Count',                    # Validation Name
     'VAL001',                               # Validation_id
     'SQLServer',                            # Source Type
     'p8054',                                # Source Host Name (matches .env.p8054)
-    3085,                                   # Source Port
     'OrderDB',                              # Source Database Name
     'dbo',                                  # Source Schema Name
     'Orders',                               # Source Table Name
@@ -55,7 +55,6 @@ validation1 = [
     "order_date >= '2024-01-01'",          # Source Filter
     'Snowflake',                            # Target Type
     'snowflake-prod',                       # Target Host Name (matches .env.snowflake-prod)
-    443,                                    # Target Port
     'ANALYTICS',                            # Target Database Name
     'PUBLIC',                               # Target Schema Name
     'ORDERS_FACT',                          # Target Table Name
@@ -72,7 +71,6 @@ validation2 = [
     'VAL002',
     'Oracle',
     'oracle-dwh',                           # matches .env.oracle-dwh
-    1521,
     'SALES_DB',
     'SALES',
     'TRANSACTIONS',
@@ -81,7 +79,6 @@ validation2 = [
     'TRANSACTION_DATE >= TO_DATE(\'2024-01-01\', \'YYYY-MM-DD\')',
     'Snowflake',
     'snowflake-prod',                       # matches .env.snowflake-prod
-    443,
     'ANALYTICS',
     'SALES',
     'TRANSACTIONS',
@@ -98,7 +95,6 @@ validation3 = [
     'VAL003',
     'Netezza',
     'nz-db-ut',                             # matches .env.nz-db-ut
-    5480,
     'cidpr',
     'stgprd',
     'PRODUCT_MASTER',
@@ -107,7 +103,6 @@ validation3 = [
     'IS_ACTIVE = TRUE',
     'SQLServer',
     'p8054',                                # matches .env.p8054
-    3085,
     'BDM Archive',
     'dbo',
     'PRODUCT_DIM',
@@ -124,7 +119,6 @@ validation4 = [
     'VAL004',
     'SQLServer',
     'p8054',                                # matches .env.p8054
-    3085,
     'OrderDB',
     'dbo',
     'Orders',
@@ -133,7 +127,6 @@ validation4 = [
     '',
     'Netezza',
     'nz-db-ut',                             # matches .env.nz-db-ut
-    5480,
     'cidpr',
     'stgprd',
     'ORDERS',
@@ -150,7 +143,6 @@ validation5 = [
     'VAL005',
     'SQLServer',
     'p8054',                                # matches .env.p8054
-    3085,
     'SalesDB',
     'dbo',
     'Sales',
@@ -159,7 +151,6 @@ validation5 = [
     "REGION = 'WEST'",
     'Netezza',
     'nz-db-ut',                             # matches .env.nz-db-ut
-    5480,
     'cidpr',
     'stgprd',
     'Sales_Fact',
@@ -199,6 +190,8 @@ print(f"[OK] Excel template created successfully: {output_path}")
 print(f"[OK] Total validations: 5")
 print(f"\nLayout: Vertical (rows are fields, columns are validations)")
 print(f"Each validation is in a separate column")
+print(f"\nNOTE: Port numbers are NOT in the Excel template.")
+print(f"      They will be loaded automatically from .env files.")
 print(f"\n" + "="*60)
 print("IMPORTANT: Host-Specific .env Files Required")
 print("="*60)
