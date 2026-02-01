@@ -16,14 +16,15 @@ A simplified guide to understanding the Data Validation Solution codebase.
 ## Project Overview
 
 This solution validates data between databases by:
-1. Reading validation rules from an Excel file
-2. Connecting to source and target databases
-3. Running aggregate SQL queries (COUNT, SUM, etc.)
-4. Comparing results and reporting pass/fail
+1. Reading validation rules from an Excel file (vertical layout)
+2. Loading credentials from host-specific `.env` files
+3. Connecting to source and target databases
+4. Running aggregate SQL queries (COUNT, SUM, etc.)
+5. Comparing results and reporting pass/fail
 
 **Architecture Pattern:** Connector Pattern + Factory Pattern
 - Each database type has its own connector
-- ConnectionManager creates the right connector based on type
+- Validator creates the right connector based on database type
 - All connectors share the same interface (BaseConnector)
 
 ---
@@ -32,8 +33,8 @@ This solution validates data between databases by:
 
 ```
 Main Flow:
-main.py → ConfigParser → ConnectionManager → QueryBuilder → Validator → Results
-           (reads Excel)   (creates connectors)  (builds SQL)   (compares)  (CSV)
+main.py → ConfigParser → EnvManager → Validator → QueryBuilder → Connectors → Results
+           (reads Excel)   (loads creds) (orchestrates) (builds SQL)   (executes)   (CSV)
 ```
 
 ---
@@ -48,15 +49,10 @@ main.py → ConfigParser → ConnectionManager → QueryBuilder → Validator �
 **`parse_arguments()`**
 - Reads command-line arguments
 - Parameters:
-  - `--config`: Path to Excel file with validations
-  - `--connections`: Path to YAML file with database connections
-  - `--output`: Where to save CSV results (optional)
-  - `--test-connections`: Just test connections, don't validate
+  - `--config`: Path to Excel file with validations (required)
+  - `--output`: Where to save CSV results (optional, auto-generated if not provided)
+  - `--sheet`: Excel sheet name (default: "Validations")
   - `--verbose`: Enable detailed logging
-
-**`test_connections(connection_manager)`**
-- Tests all database connections before running validations
-- Prints a nice table showing which connections work
 
 **`generate_output_path(custom_path)`**
 - Creates output filename with timestamp
@@ -69,19 +65,22 @@ main.py → ConfigParser → ConnectionManager → QueryBuilder → Validator �
 **`print_summary(results)`**
 - Prints summary table to console
 - Shows: Total, Passed, Failed, Errors
+- Lists failed validations and errors
 
 **`main()`**
 - Orchestrates everything:
-  1. Load connections from YAML
-  2. Parse validations from Excel
-  3. Run each validation
-  4. Save results to CSV
-  5. Print summary
+  1. Parse command-line arguments
+  2. Load and parse validations from Excel
+  3. Initialize Validator
+  4. Run each validation
+  5. Save results to CSV
+  6. Print summary
+  7. Exit with appropriate code (0 = success, 1 = failures/errors)
 
 ---
 
 ### 2. src/config_parser.py
-**Purpose:** Reads and parses the Excel validation configuration file
+**Purpose:** Reads and parses the Excel validation configuration file (vertical layout)
 
 #### Classes:
 
@@ -90,18 +89,23 @@ main.py → ConfigParser → ConnectionManager → QueryBuilder → Validator �
 - Fields:
   - `validation_id`: Unique ID (e.g., "VAL001")
   - `validation_name`: Descriptive name
-  - `source_connection`: Which connection to use for source
-  - `source_database/schema/table/column`: Where to query
-  - `source_filter`: WHERE clause for source
-  - `target_*`: Same but for target database
-  - `rule_type`: What aggregate to use (COUNT_STAR, SUM, etc.)
-  - `custom_expression`: For CUSTOM rule types
-  - `threshold_type`: EXACT, PERCENTAGE, or ABSOLUTE
-  - `threshold_value`: The tolerance (0 for exact, 0.01 for 1%, etc.)
-  - `enabled`: TRUE/FALSE to enable/disable
+  - **Source details:**
+    - `source_type`: Database type (SQLServer, Oracle, Netezza, Snowflake, CSV)
+    - `source_host`: Host identifier (used to lookup .env file)
+    - `source_port`: Port number
+    - `source_database/schema/table/column`: Where to query
+    - `source_column_expression`: Custom SQL expression for source column
+    - `source_filter`: WHERE clause for source
+  - **Target details:** (same structure as source)
+  - **Validation rules:**
+    - `rule_type`: What aggregate to use (COUNT_STAR, SUM, AVG, etc.)
+    - `threshold_type`: EXACT, PERCENTAGE, or ABSOLUTE
+    - `threshold_value`: The tolerance (0 for exact, 0.01 for 1%, etc.)
+    - `enabled`: TRUE/FALSE to enable/disable (default: TRUE)
 
 **`ConfigParser`**
-- Reads Excel file and converts rows to ValidationConfig objects
+- Reads Excel file with vertical layout and converts to ValidationConfig objects
+- Vertical layout: First column = field names, subsequent columns = validations
 
 #### Key Methods:
 
@@ -114,143 +118,94 @@ main.py → ConfigParser → ConnectionManager → QueryBuilder → Validator �
 - Main method that does all the work
 - Returns: List of ValidationConfig objects
 - Steps:
-  1. Reads Excel file with pandas
-  2. Validates required columns exist
-  3. Parses each row
-  4. Skips disabled validations
-  5. Returns list of enabled validations
+  1. Reads Excel file with pandas (no header)
+  2. Creates mapping of field names to row indices
+  3. Parses each column (each column = one validation)
+  4. Returns list of ValidationConfig objects
 
-**`_parse_row(row, row_idx)`**
-- Converts one Excel row to ValidationConfig object
-- Handles missing values (NaN) gracefully
+**`_parse_column(df, col_idx, field_map)`**
+- Converts one Excel column to ValidationConfig object
+- Handles missing values gracefully
 - Validates threshold_type is valid
-
-**Helper methods:**
-- `_get_string_value()`: Gets string from Excel, handles NaN
-- `_get_float_value()`: Gets number from Excel, handles NaN
-- `_get_bool_value()`: Gets TRUE/FALSE from Excel, handles various formats
+- Helper function `get_value()` extracts values from specific fields
 
 ---
 
-### 3. src/connection_manager.py
-**Purpose:** Manages database connections from YAML config
+### 3. src/env_manager.py
+**Purpose:** Manages host-specific credentials from `.env` files
 
-#### Class: `ConnectionManager`
+#### Class: `EnvManager`
 
-**`__init__(config_path)`**
-- Loads YAML file with database connections
-- Loads .env file for environment variables
+**`__init__(env_dir=None)`**
+- Initializes environment manager
 - Parameters:
-  - `config_path`: Path to connections.yaml
+  - `env_dir`: Directory containing .env files (default: project root)
+- Creates credentials cache for performance
 
-**`_load_config()`**
-- Reads YAML file
-- Validates 'connections' key exists
-- Stores connections in memory
+**`get_credentials(hostname)`**
+- Loads credentials for a specific hostname
+- Looks for `.env.{hostname}` file
+- Returns: Dictionary with credentials (HOSTNAME, USERNAME, PASSWORD, etc.)
+- Validates required fields are present
+- Caches results for performance
+- Raises ConfigurationException if file not found or invalid
 
-**`_resolve_env_vars(value)`**
-- Replaces `${VAR_NAME}` with actual environment variable values
-- Example: `${SQLSERVER_USER}` becomes `"john_doe"`
-- Works recursively for nested dictionaries
-
-**`get_connector(connection_name)`**
-- Returns the right connector for a connection name
-- Steps:
-  1. Finds connection config in YAML
-  2. Resolves environment variables
-  3. Determines connector type (sqlserver, oracle, etc.)
-  4. Creates and returns appropriate connector instance
-
-**`test_connection(connection_name)`**
-- Tests if a specific connection works
-- Returns: True if successful, False otherwise
-
-**`test_all_connections()`**
-- Tests all configured connections
-- Returns: Dictionary mapping connection names to True/False
-
-#### Connector Map:
-```python
-CONNECTOR_MAP = {
-    'sqlserver': SQLServerConnector,
-    'oracle': OracleConnector,
-    'netezza': NetezzaConnector,
-    'snowflake': SnowflakeConnector,
-    'csv': CSVConnector
-}
-```
+**`clear_cache()`**
+- Clears the credentials cache
 
 ---
 
 ### 4. src/query_builder.py
-**Purpose:** Builds SQL queries for aggregate validations
+**Purpose:** Builds SQL queries for different aggregate functions
 
 #### Class: `QueryBuilder`
 
-**Static Class** - All methods are `@staticmethod`, no need to create an instance
-
-**Rule Type Mapping:**
-```python
-RULE_TYPES = {
-    'COUNT_STAR': 'COUNT(*)',
-    'COUNT_COLUMN': 'COUNT({column})',
-    'SUM': 'SUM({column})',
-    'AVG': 'AVG({column})',
-    'MIN': 'MIN({column})',
-    'MAX': 'MAX({column})',
-    'COUNT_DISTINCT': 'COUNT(DISTINCT {column})',
-    'COUNT_NULL': 'SUM(CASE WHEN {column} IS NULL THEN 1 ELSE 0 END)',
-    'COUNT_NOT_NULL': 'SUM(CASE WHEN {column} IS NOT NULL THEN 1 ELSE 0 END)'
-}
-```
-
-#### Key Methods:
-
-**`build_query(dialect, database, schema, table, column, rule_type, custom_expression, filter_clause)`**
-- Builds a complete SQL query
+**`build_query(...)`** (static method)
+- Builds SQL query based on rule type
 - Parameters:
-  - `dialect`: Database type (sqlserver, oracle, etc.)
-  - `database`: Database name (optional)
-  - `schema`: Schema name (optional)
-  - `table`: Table name (required)
-  - `column`: Column name (needed for most rules)
-  - `rule_type`: Type of aggregate
-  - `custom_expression`: Custom SQL (if rule_type=CUSTOM)
-  - `filter_clause`: WHERE clause without "WHERE" keyword
+  - `dialect`: Database dialect (sqlserver, oracle, netezza, snowflake)
+  - `database/schema/table`: Target location
+  - `column`: Column name (if applicable)
+  - `rule_type`: Type of aggregate (COUNT_STAR, SUM, AVG, etc.)
+  - `custom_expression`: Custom SQL expression (for CUSTOM rule type)
+  - `filter_clause`: WHERE condition
 - Returns: Complete SQL query string
-- Example output: `SELECT COUNT(*) FROM dbo.Orders WHERE order_date >= '2024-01-01'`
 
-**`_build_table_reference(dialect, database, schema, table)`**
-- Builds the table reference part based on database type
-- Examples:
-  - SQL Server: `[database].[schema].[table]`
-  - Oracle: `schema.table`
-  - Snowflake: `database.schema.table`
+**Supported Rule Types:**
+- `COUNT_STAR`: `SELECT COUNT(*) FROM table WHERE filter`
+- `COUNT_COLUMN`: `SELECT COUNT(column) FROM table WHERE filter`
+- `SUM`: `SELECT SUM(column) FROM table WHERE filter`
+- `AVG`: `SELECT AVG(column) FROM table WHERE filter`
+- `MIN`: `SELECT MIN(column) FROM table WHERE filter`
+- `MAX`: `SELECT MAX(column) FROM table WHERE filter`
+- `COUNT_DISTINCT`: `SELECT COUNT(DISTINCT column) FROM table WHERE filter`
+- `COUNT_NULL`: `SELECT SUM(CASE WHEN column IS NULL THEN 1 ELSE 0 END) FROM table WHERE filter`
+- `COUNT_NOT_NULL`: `SELECT COUNT(column) FROM table WHERE filter`
+- `CUSTOM`: Uses custom_expression directly
 
-**`validate_rule_type(rule_type)`**
-- Checks if a rule type is valid
-- Returns: True/False
+**Helper methods:**
+- `_build_table_name()`: Constructs fully qualified table name
+- `_validate_identifiers()`: Prevents SQL injection
 
 ---
 
 ### 5. src/validator.py
-**Purpose:** Core validation engine that runs validations and compares results
+**Purpose:** Core validation engine that runs validations
 
 #### Classes:
 
 **`ValidationResult` (dataclass)**
-- Stores the result of one validation
+- Stores results of a single validation
 - Fields:
-  - `validation_id`, `validation_name`: From config
+  - `validation_id`, `validation_name`
   - `status`: PASS, FAIL, or ERROR
-  - `source_value`: Value from source query
-  - `target_value`: Value from target query
+  - `source_value`, `target_value`: Actual values returned
   - `difference`: target_value - source_value
   - `percentage_diff`: Percentage difference
-  - `source_details`: Connection and table info
-  - `target_details`: Connection and table info
-  - `execution_timestamp`: When it ran
-  - `error_message`: Error details (if status=ERROR)
+  - `source_details`, `target_details`: Connection and table info
+  - `rule_type`, `threshold_type`, `threshold_value`
+  - `execution_timestamp`
+  - `error_message`: Error details (if status is ERROR)
   - `source_query`, `target_query`: SQL queries executed
 
 **`Validator`**
@@ -258,241 +213,236 @@ RULE_TYPES = {
 
 #### Key Methods:
 
-**`__init__(connection_manager)`**
+**`__init__(env_dir=None)`**
+- Initializes validator with EnvManager
 - Parameters:
-  - `connection_manager`: ConnectionManager instance to get database connections
+  - `env_dir`: Directory containing .env files
+
+**`_create_connector(db_type, host_identifier, port, database, schema=None)`**
+- Creates a connector instance for a specific database
+- Loads credentials from `.env.{host_identifier}` file
+- Returns: Appropriate connector instance (SQLServerConnector, OracleConnector, etc.)
+- Priority: .env file values override Excel values
 
 **`validate(config)`**
-- Main validation method
+- Executes a single validation
 - Parameters:
-  - `config`: ValidationConfig object with validation details
+  - `config`: ValidationConfig object
 - Returns: ValidationResult object
 - Steps:
-  1. Get source and target connectors
-  2. Build SQL queries for both
+  1. Create source and target connectors
+  2. Build SQL queries using QueryBuilder
   3. Execute queries
-  4. Compare results
-  5. Determine PASS/FAIL based on threshold
-  6. Return ValidationResult
+  4. Compare results based on threshold
+  5. Return ValidationResult
 
-**`_build_details(connection, database, schema, table)`**
-- Creates a details string
-- Example: `"sqlserver_prod:OrderDB.dbo.Orders"`
-
-**`_to_numeric(value)`**
-- Converts value to float for comparison
-- Handles None gracefully
-
-**`_check_threshold(source_value, target_value, threshold_type, threshold_value)`**
-- Determines if validation passes
+**`_check_threshold(source_value, target_value, threshold_type, threshold_value)`** (static)
+- Determines if values pass the threshold criteria
+- Returns: 'PASS' or 'FAIL'
 - Logic:
-  - **EXACT**: `abs(target - source) <= threshold_value`
-  - **PERCENTAGE**: `abs((target - source) / source) <= threshold_value`
-  - **ABSOLUTE**: `abs(target - source) <= threshold_value`
-- Returns: "PASS" or "FAIL"
+  - `EXACT`: abs(target - source) <= threshold_value
+  - `PERCENTAGE`: abs((target - source) / source) <= threshold_value
+  - `ABSOLUTE`: abs(target - source) <= threshold_value
+
+**Helper methods:**
+- `_build_details()`: Formats connection details string
+- `_to_numeric()`: Converts values to numeric for comparison
 
 ---
 
-### 6. Connectors (src/connectors/)
+### 6. src/connectors/base_connector.py
+**Purpose:** Abstract base class for all database connectors
 
-All connectors inherit from `BaseConnector` and implement the same interface.
+#### Class: `BaseConnector`
 
-#### Base Connector (base_connector.py)
-
-**`BaseConnector` (Abstract Base Class)**
-- Defines the interface all connectors must implement
-
-**Abstract Methods** (must be implemented by each connector):
+**Abstract methods (must be implemented by subclasses):**
 - `connect()`: Establish database connection
 - `disconnect()`: Close database connection
-- `execute_query(sql)`: Run SQL and return result
+- `execute_query(sql)`: Execute SQL and return single result
 - `test_connection()`: Test if connection works
-- `get_dialect()`: Return database type name
+- `get_dialect()`: Return database dialect name
 
-**Context Manager Support:**
-```python
-with connector as conn:
-    result = conn.execute_query("SELECT COUNT(*) FROM table")
-# Automatically connects and disconnects
-```
-
-#### SQL Server Connector (sqlserver_connector.py)
-
-**`SQLServerConnector`**
-- Uses `pyodbc` library
-- Default driver: `{ODBC Driver 17 for SQL Server}`
-
-**`connect()`**
-- Builds connection string from config
-- Supports:
-  - Individual parameters (host, port, database, username, password)
-  - Windows Authentication (no username/password)
-  - Custom connection string
-- Sets timeout to 30 seconds
-
-**`execute_query(sql)`**
-- Executes query using cursor
-- Returns first column of first row
-- Handles NULL values
-
-#### Oracle Connector (oracle_connector.py)
-
-**`OracleConnector`**
-- Uses `pyodbc` with Oracle ODBC driver
-- Default driver: `{Oracle in OraClient12Home1}`
-
-**`connect()`**
-- Supports both `service_name` and `sid`
-- Connection string format: `Driver={driver};DBQ=host:port/service;UID=user;PWD=pass;`
-
-**`test_connection()`**
-- Uses Oracle-specific query: `SELECT 1 FROM DUAL`
-
-#### Netezza Connector (netezza_connector.py)
-
-**`NetezzaConnector`**
-- Uses `nzpy` library
-- Default port: 5480
-
-**`connect()`**
-- Parameters:
-  - `securityLevel`: Security level (default: 0)
-  - `logLevel`: Logging level (default: 0)
-
-#### Snowflake Connector (snowflake_connector.py)
-
-**`SnowflakeConnector`**
-- Uses `snowflake-connector-python`
-
-**`connect()`**
-- Required parameters:
-  - `account`: Snowflake account ID
-  - `username`, `password`
-- Optional parameters:
-  - `database`, `schema`, `warehouse`, `role`
-
-#### CSV Connector (csv_connector.py)
-
-**`CSVConnector`**
-- Uses `pandas` to load CSV into memory
-- Uses `pandasql` library for SQL queries on DataFrames
-
-**`connect()`**
-- Loads CSV file with pandas
-- Parameters:
-  - `file_path`: Path to CSV file
-  - `encoding`: File encoding (default: utf-8)
-  - `delimiter`: Column separator (default: ,)
-
-**`execute_query(sql)`**
-- Uses pandasql to run SQL on DataFrame
-- The DataFrame is referenced as "data" in SQL
-- Example: `SELECT COUNT(*) FROM data WHERE age > 18`
+**Context manager support:**
+- `__enter__()`: Opens connection
+- `__exit__()`: Closes connection automatically
+- Allows `with connector as conn:` syntax
 
 ---
 
-### 7. Utilities (src/utils/)
+### 7. src/connectors/sqlserver_connector.py
+**Purpose:** SQL Server database connector
 
-#### Exceptions (exceptions.py)
+#### Class: `SQLServerConnector`
 
-Custom exception hierarchy:
-- `ValidationException`: Base exception
-  - `ConnectionException`: Connection errors
-  - `ConfigurationException`: Config file errors
-  - `QueryExecutionException`: SQL execution errors
-  - `InvalidRuleTypeException`: Invalid rule type
+**`connect()`**
+- Uses pyodbc to connect to SQL Server
+- Connection string format:
+  - `DRIVER={ODBC Driver 17 for SQL Server};SERVER=host,port;DATABASE=db;UID=user;PWD=pass`
+  - For Windows Authentication: Empty UID and PWD uses Trusted_Connection
 
-#### Logger (logger.py)
+**`execute_query(sql)`**
+- Executes query and returns first row, first column
+- Uses cursor with fetchone()
 
-**`setup_logger(name, level)`**
-- Creates a logger with console output
-- Parameters:
-  - `name`: Logger name (default: "data_validator")
-  - `level`: Logging level (default: INFO)
-- Format: `2024-01-15 14:30:22 - INFO - Message here`
+**`get_dialect()`**
+- Returns: 'sqlserver'
 
-**Default logger instance:**
-```python
-from src.utils.logger import logger
-logger.info("This is an info message")
-logger.error("This is an error message")
-```
+---
+
+### 8. src/connectors/oracle_connector.py
+**Purpose:** Oracle database connector (using pyodbc)
+
+#### Class: `OracleConnector`
+
+**`connect()`**
+- Uses pyodbc with Oracle ODBC driver
+- Connection string format:
+  - `Driver={Oracle in OraClient12Home1};DBQ=host:port/service_name;UID=user;PWD=pass`
+- Supports both SERVICE_NAME and SID
+
+**`execute_query(sql)`**
+- Executes query and returns first value
+
+**`get_dialect()`**
+- Returns: 'oracle'
+
+---
+
+### 9. src/connectors/netezza_connector.py
+**Purpose:** IBM Netezza database connector
+
+#### Class: `NetezzaConnector`
+
+**`connect()`**
+- Uses nzpy to connect to Netezza
+- Connection parameters: host, port, database, user, password
+
+**`execute_query(sql)`**
+- Executes query and returns first value
+
+**`get_dialect()`**
+- Returns: 'netezza'
+
+---
+
+### 10. src/connectors/snowflake_connector.py
+**Purpose:** Snowflake data warehouse connector
+
+#### Class: `SnowflakeConnector`
+
+**`connect()`**
+- Uses snowflake-connector-python
+- Connection parameters: account, user, password, database, warehouse, schema, role
+
+**`execute_query(sql)`**
+- Executes query and returns first value
+
+**`get_dialect()`**
+- Returns: 'snowflake'
+
+---
+
+### 11. src/connectors/csv_connector.py
+**Purpose:** CSV file connector (for validating CSV files)
+
+#### Class: `CSVConnector`
+
+**`connect()`**
+- Uses pandas to read CSV file
+- Stores DataFrame in memory
+
+**`execute_query(sql)`**
+- Parses SQL to extract:
+  - Aggregate function (COUNT, SUM, etc.)
+  - Column name
+  - Filter condition
+- Applies filter to DataFrame
+- Executes aggregate function on pandas DataFrame
+- Returns result
+
+**`get_dialect()`**
+- Returns: 'csv'
+
+---
+
+### 12. src/utils/logger.py
+**Purpose:** Centralized logging configuration
+
+#### Functions:
+
+**`setup_logger(level=logging.INFO)`**
+- Configures logging with console and file handlers
+- Format: `[TIMESTAMP] [LEVEL] message`
+- File: `validation.log`
+
+**`logger`**
+- Global logger instance
+- Use: `logger.info()`, `logger.error()`, etc.
+
+---
+
+### 13. src/utils/exceptions.py
+**Purpose:** Custom exception classes
+
+#### Classes:
+
+**`ValidationException`**
+- Base exception for validation errors
+
+**`ConfigurationException`**
+- Raised when configuration is invalid
+
+**`ConnectionException`**
+- Raised when database connection fails
+
+**`QueryException`**
+- Raised when SQL query fails
 
 ---
 
 ## Configuration Files
 
-### 1. connections.yaml
+### Excel Configuration (Vertical Layout)
 
-**Purpose:** Defines database connections
-
-**Structure:**
-```yaml
-connections:
-  connection_name:      # Used in Excel config
-    type: sqlserver     # Connector type
-    host: server.com    # Database server
-    port: 1433          # Port number
-    database: MyDB      # Database name
-    username: ${VAR}    # Can use env variables
-    password: ${VAR}    # Can use env variables
+```
+Field Name               | Validation 1        | Validation 2
+-------------------------|---------------------|---------------------
+Validation Name          | Daily Order Count   | Total Sales
+Validation_id            | VAL001              | VAL002
+Source Type              | SQLServer           | Netezza
+Source Host Name         | p8054               | nz-db-ut
+Source Port              | 3085                | 5480
+Source Database Name     | OrderDB             | SalesDB
+Source Schema Name       | dbo                 | sales
+Source Table Name        | Orders              | Transactions
+Source Column Name       |                     | Amount
+Source Column Expression |                     |
+Source Filter            | date >= '2024-01-01'|
+Target Type              | Snowflake           | Snowflake
+Target Host Name         | snowflake-prod      | snowflake-prod
+...                      | ...                 | ...
 ```
 
-**Supported Types:**
-- `sqlserver` or `mssql`
-- `oracle`
-- `netezza` or `nz`
-- `snowflake`
-- `csv`
+### .env Files (Host-Specific Credentials)
 
-**Environment Variables:**
-- Use `${VAR_NAME}` syntax
-- Resolved from `.env` file or system environment
+**Format:** `.env.{hostname}`
 
-### 2. Excel Validation Config
-
-**Sheet Name:** "Validations"
-
-**Required Columns:**
-- `validation_id`: Unique identifier
-- `validation_name`: Description
-- `source_connection`: Connection name from YAML
-- `source_table`: Table name
-- `target_connection`: Connection name from YAML
-- `target_table`: Table name
-- `rule_type`: Aggregate type
-- `threshold_type`: EXACT/PERCENTAGE/ABSOLUTE
-- `threshold_value`: Tolerance value
-
-**Optional Columns:**
-- `source_database/schema/column/filter`
-- `target_database/schema/column/filter`
-- `custom_expression`: For CUSTOM rule type
-- `enabled`: TRUE/FALSE
-
-**Example Row:**
-```
-VAL001 | Order Count | sqlserver_prod | NULL | dbo | Orders | NULL | date>='2024-01-01' |
-snowflake_cloud | ANALYTICS | PUBLIC | ORDERS | NULL | DATE>='2024-01-01' |
-COUNT_STAR | NULL | EXACT | 0 | TRUE
+**Example:** `.env.p8054`
+```env
+HOSTNAME=p8054.company.com
+USERNAME=sql_user
+PASSWORD=sql_password
+PORT=3085
+DATABASE=BDM Archive
 ```
 
-### 3. .env File
+**Required Fields:**
+- HOSTNAME, USERNAME, PASSWORD
 
-**Purpose:** Store sensitive credentials
-
-**Format:**
-```
-SQLSERVER_USER=john_doe
-SQLSERVER_PASS=secret123
-ORACLE_USER=oracle_user
-ORACLE_PASS=oracle_pass
-```
-
-**Security:**
-- Ignored by Git (.gitignore)
-- Never commit to repository
-- Use .env.template as template
+**Optional Fields:**
+- PORT, DATABASE, SCHEMA, DRIVER
+- Oracle: SERVICE_NAME or SID
+- Snowflake: ACCOUNT, WAREHOUSE, ROLE
 
 ---
 
@@ -500,131 +450,171 @@ ORACLE_PASS=oracle_pass
 
 ### Execution Flow:
 
-```
-1. User runs: python -m src.main --config validations.xlsx --connections connections.yaml
+1. **User runs command:**
+   ```bash
+   python -m src.main --config validations.xlsx
+   ```
 
-2. main.py:
-   - Parses command-line arguments
-   - Creates ConnectionManager with connections.yaml
-   - Creates ConfigParser with validations.xlsx
+2. **main.py parses arguments**
+   - Validates config file exists
+   - Sets up logging
 
-3. ConnectionManager:
-   - Loads connections.yaml
-   - Loads .env file
-   - Stores connection configs in memory
-
-4. ConfigParser:
-   - Reads Excel file
-   - Converts each row to ValidationConfig object
+3. **ConfigParser reads Excel**
+   - Loads vertical layout Excel file
+   - Maps field names to row indices
+   - Parses each column into ValidationConfig object
    - Returns list of validations
 
-5. For each validation:
+4. **Validator initializes**
+   - Creates EnvManager for credential management
 
-   a. Validator.validate(config):
-      - Gets source connector from ConnectionManager
-      - Gets target connector from ConnectionManager
+5. **For each validation:**
+   - **EnvManager loads credentials**
+     - Reads `.env.{source_host}` file
+     - Reads `.env.{target_host}` file
+     - Validates required fields present
 
-   b. For source:
-      - QueryBuilder builds SQL query
-      - Source connector executes query
-      - Returns single value (e.g., 1500)
+   - **Validator creates connectors**
+     - Creates source connector (e.g., SQLServerConnector)
+     - Creates target connector (e.g., SnowflakeConnector)
+     - Passes credentials from .env files
 
-   c. For target:
-      - QueryBuilder builds SQL query
-      - Target connector executes query
-      - Returns single value (e.g., 1500)
+   - **QueryBuilder builds SQL**
+     - Generates SQL based on rule_type
+     - Applies filters
+     - Returns query string
 
-   d. Comparison:
-      - Calculates difference: 1500 - 1500 = 0
-      - Checks threshold: EXACT with value 0
-      - Result: PASS
+   - **Connectors execute queries**
+     - Opens database connections
+     - Executes SQL queries
+     - Returns single aggregate value
+     - Closes connections
 
-   e. Returns ValidationResult object
+   - **Validator compares results**
+     - Checks if values match within threshold
+     - Creates ValidationResult (PASS/FAIL/ERROR)
 
-6. All results collected
+   - **Validator returns result**
+     - Result added to results list
 
-7. Save to CSV:
-   - Converts results to DataFrame
-   - Saves to output/validation_report_TIMESTAMP.csv
+6. **main.py saves results**
+   - Converts results to pandas DataFrame
+   - Saves to CSV file
 
-8. Print summary to console
+7. **main.py prints summary**
+   - Shows total, passed, failed, errors
+   - Lists failed validations
+
+8. **Program exits**
+   - Exit code 0 if all passed
+   - Exit code 1 if any failures or errors
+
+---
+
+## Example Execution
+
+### Input (Excel):
+```
+Source: SQLServer @ p8054:3085 / OrderDB.dbo.Orders
+Target: Snowflake @ snowflake-prod / ANALYTICS.PUBLIC.ORDERS
+Rule: COUNT_STAR
+Filter: order_date >= '2024-01-01'
+Threshold: EXACT (0)
 ```
 
-### Example Execution:
-
-**Input (Excel):**
+### .env Files:
+**`.env.p8054`**
+```env
+HOSTNAME=p8054.company.com
+USERNAME=sql_user
+PASSWORD=sql_password
+PORT=3085
 ```
-VAL001 | Daily Orders | sqlserver_prod | dbo | Orders | COUNT_STAR | EXACT | 0
+
+**`.env.snowflake-prod`**
+```env
+HOSTNAME=xy12345.us-east-1.snowflakecomputing.com
+USERNAME=snow_user
+PASSWORD=snow_password
+ACCOUNT=xy12345.us-east-1
+WAREHOUSE=COMPUTE_WH
 ```
 
-**What Happens:**
-1. ConnectionManager gets SQLServerConnector for "sqlserver_prod"
-2. QueryBuilder creates: `SELECT COUNT(*) FROM [OrderDB].[dbo].[Orders]`
-3. SQLServerConnector executes query → Result: 1500
-4. ConnectionManager gets SnowflakeConnector for target
-5. QueryBuilder creates: `SELECT COUNT(*) FROM ANALYTICS.PUBLIC.ORDERS`
-6. SnowflakeConnector executes query → Result: 1500
-7. Validator compares: 1500 vs 1500 with EXACT threshold
-8. Result: PASS
+### Generated SQL:
+**Source Query:**
+```sql
+SELECT COUNT(*) FROM OrderDB.dbo.Orders
+WHERE order_date >= '2024-01-01'
+```
 
-**Output (CSV):**
+**Target Query:**
+```sql
+SELECT COUNT(*) FROM ANALYTICS.PUBLIC.ORDERS
+WHERE ORDER_DATE >= '2024-01-01'
+```
+
+### Execution:
+```
+1. Load credentials from .env.p8054 and .env.snowflake-prod
+2. Create SQLServerConnector with p8054 credentials
+3. Create SnowflakeConnector with snowflake-prod credentials
+4. Execute source query → Result: 1500
+5. Execute target query → Result: 1500
+6. Compare: 1500 == 1500 → PASS
+7. Save result to CSV
+```
+
+### Output (CSV):
 ```csv
-validation_id,validation_name,status,source_value,target_value,difference,...
-VAL001,Daily Orders,PASS,1500,1500,0,...
+validation_id,validation_name,status,source_value,target_value,difference,percentage_diff,...
+VAL001,Daily Order Count,PASS,1500,1500,0,0.0,...
 ```
 
 ---
 
-## Quick Reference
+## Key Design Decisions
 
-### Adding a New Validation:
-
-1. Open `examples/validation_template.xlsx`
-2. Add a new row with:
-   - Unique validation_id
-   - Source and target details
-   - Rule type
-   - Threshold settings
-3. Save and run
-
-### Adding a New Database Connection:
-
-1. Open `config/connections.yaml`
-2. Add new connection under `connections:`
-3. Add credentials to `.env` file
-4. Test: `python -m src.main --connections config/connections.yaml --test-connections`
-
-### Understanding a Validation Result:
-
-- **PASS**: Values match within threshold
-- **FAIL**: Values differ more than threshold
-- **ERROR**: Connection or query failed
-
-### Threshold Examples:
-
-- `EXACT, 0`: Must match exactly
-- `PERCENTAGE, 0.01`: Allow 1% difference
-- `ABSOLUTE, 100`: Allow difference of 100
+1. **Vertical Excel Layout**: More natural for defining multiple validations side-by-side
+2. **Host-Specific .env Files**: Supports multiple instances and environments cleanly
+3. **Connector Pattern**: Easy to add new database types
+4. **Context Managers**: Automatic connection cleanup
+5. **Aggregate-Only Queries**: Fast, scalable validation without row-by-row comparison
+6. **Single Value Return**: All queries return one aggregate value for simple comparison
+7. **CSV Output**: Easy to share, import into Excel, or load into BI tools
 
 ---
 
-## Common Questions
+## Adding a New Database Type
 
-**Q: Where are credentials stored?**
-A: In `.env` file, referenced in `connections.yaml` using `${VAR_NAME}`
+To add support for a new database (e.g., PostgreSQL):
 
-**Q: How do I disable a validation?**
-A: Set `enabled = FALSE` in Excel
+1. **Create connector:** `src/connectors/postgres_connector.py`
+   ```python
+   class PostgresConnector(BaseConnector):
+       def connect(self): ...
+       def execute_query(self, sql): ...
+       def get_dialect(self): return 'postgres'
+   ```
 
-**Q: Can I validate between different database types?**
-A: Yes! Source can be SQL Server, target can be Snowflake, etc.
+2. **Update Validator:** Add to CONNECTOR_MAP
+   ```python
+   CONNECTOR_MAP = {
+       ...
+       'postgres': PostgresConnector,
+       'postgresql': PostgresConnector,
+   }
+   ```
 
-**Q: What if a query fails?**
-A: Status = ERROR, error message in CSV output, validation continues
+3. **Create .env template:** `.env.example-postgres`
 
-**Q: How do I add a custom SQL expression?**
-A: Set `rule_type = CUSTOM`, put SQL in `custom_expression` column
+4. **Update documentation:** Add to README.md and CREDENTIALS_GUIDE.md
+
+That's it! The rest of the system will automatically work with the new database type.
 
 ---
 
-This walkthrough covers all the essential components. Each file is designed to do one thing well, making the system modular and easy to understand!
+## Questions?
+
+For more details, see:
+- [README.md](README.md) - Setup and usage instructions
+- [CREDENTIALS_GUIDE.md](CREDENTIALS_GUIDE.md) - Detailed credential management guide
