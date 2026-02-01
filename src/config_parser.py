@@ -45,18 +45,17 @@ class ConfigParser:
     """Parser for Excel validation configuration files with vertical layout."""
 
     # Expected row labels in Excel (case-insensitive)
+    # Note: Port fields are NOT in Excel - they are loaded from .env files
     REQUIRED_ROWS = [
         'Validation Name',
         'Validation_id',
         'Source Type',
         'Source Host Name',
-        'Source Port',
         'Source Database Name',
         'Source Schema Name',
         'Source Table Name',
         'Target Type',
         'Target Host Name',
-        'Target Port',
         'Target Database Name',
         'Target Schema Name',
         'Target Table Name',
