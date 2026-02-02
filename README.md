@@ -98,36 +98,26 @@ DATABASE=BDM Archive
 
 ### Validation Configuration (Excel)
 
-The Excel file uses a **vertical layout** where each column is a validation and rows are fields.
+The Excel file uses a **horizontal layout** (standard Excel format) where each ROW is one validation.
 
-**Format:** The first column contains field names, and each subsequent column contains one validation.
+**Format:** First row contains column headers, each subsequent row is one validation.
 
-| Field Name | Validation 1 | Validation 2 |
-|-----------|--------------|--------------|
-| Validation Name | Daily Order Count | Total Sales Amount |
-| Validation_id | VAL001 | VAL002 |
-| Source Type | SQLServer | Netezza |
-| Source Host Name | p8054 | nz-db-ut |
-| Source Port | 3085 | 5480 |
-| Source Database Name | OrderDB | SalesDB |
-| Source Schema Name | dbo | sales |
-| Source Table Name | Orders | Transactions |
-| Source Column Name | | Amount |
-| Source Column Expression | | |
-| Source Filter | order_date = '2024-01-15' | |
-| Target Type | Snowflake | Snowflake |
-| Target Host Name | snowflake-prod | snowflake-prod |
-| ... | ... | ... |
+| Validation Name | Validation_id | Source Type | Source Host Name | Source Database Name | ... | Target Type | Target Host Name | Rule Type |
+|-----------------|---------------|-------------|------------------|----------------------|-----|-------------|------------------|-----------|
+| Daily Order Count | VAL001 | SQLServer | p8054 | OrderDB | ... | Snowflake | snowflake-prod | COUNT_STAR |
+| Total Sales Amount | VAL002 | Oracle | oracle-dwh | SALES_DB | ... | Snowflake | snowflake-prod | SUM |
 
-**Required Fields:**
+**Required Columns:**
 - Validation Name, Validation_id
-- Source Type, Source Host Name, Source Port, Source Database Name, Source Table Name
-- Target Type, Target Host Name, Target Port, Target Database Name, Target Table Name
+- Source Type, Source Host Name, Source Database Name, Source Table Name
+- Target Type, Target Host Name, Target Database Name, Target Table Name
 - Rule Type
 
-**Optional Fields:**
+**Optional Columns:**
 - Source/Target Schema Name, Column Name, Column Expression, Filter
 - Threshold Type (default: EXACT), Threshold Value (default: 0)
+
+**Note:** Port fields are NOT in Excel - they are loaded from .env files automatically.
 
 **Rule Types:**
 - `COUNT_STAR` - COUNT(*) - total row count
@@ -234,73 +224,76 @@ Total Validations: 8
 
 ### Example 1: Count Validation with Exact Match
 
-In your Excel file (vertical layout):
+Excel row (one validation):
 
-```
-Field Name                    | Validation 1
-------------------------------|---------------------------
-Validation Name               | Daily Order Count
-Validation_id                 | VAL001
-Source Type                   | SQLServer
-Source Host Name              | p8054
-Source Port                   | 3085
-Source Database Name          | OrderDB
-Source Schema Name            | dbo
-Source Table Name             | Orders
-Source Filter                 | order_date = '2024-01-15'
-Target Type                   | Snowflake
-Target Host Name              | snowflake-prod
-Target Database Name          | ANALYTICS
-Target Schema Name            | PUBLIC
-Target Table Name             | ORDERS
-Target Filter                 | ORDER_DATE = '2024-01-15'
-Rule Type                     | COUNT_STAR
-Threshold Type                | EXACT
-Threshold Value               | 0
-```
+| Column | Value |
+|--------|-------|
+| Validation Name | Daily Order Count |
+| Validation_id | VAL001 |
+| Source Type | SQLServer |
+| Source Host Name | p8054 |
+| Source Database Name | OrderDB |
+| Source Schema Name | dbo |
+| Source Table Name | Orders |
+| Source Filter | order_date >= '2024-01-01' |
+| Target Type | Snowflake |
+| Target Host Name | snowflake-prod |
+| Target Database Name | ANALYTICS |
+| Target Schema Name | PUBLIC |
+| Target Table Name | ORDERS_FACT |
+| Target Filter | ORDER_DATE >= '2024-01-01' |
+| Rule Type | COUNT_STAR |
+| Threshold Type | EXACT |
+| Threshold Value | 0 |
 
 Requires `.env.p8054` and `.env.snowflake-prod` files with credentials.
 
 ### Example 2: Sum Validation with Percentage Threshold
 
-```
-Field Name                    | Validation 2
-------------------------------|---------------------------
-Validation Name               | Total Sales Amount
-Validation_id                 | VAL002
-Source Type                   | Oracle
-Source Host Name              | oracle-dwh
-Source Database Name          | SALES_DB
-Source Schema Name            | SALES
-Source Table Name             | TRANSACTIONS
-Source Column Name            | AMOUNT
-Target Type                   | Snowflake
-Target Host Name              | snowflake-prod
-Target Table Name             | TRANSACTIONS
-Target Column Name            | AMOUNT
-Rule Type                     | SUM
-Threshold Type                | PERCENTAGE
-Threshold Value               | 0.01
-```
+Excel row:
+
+| Column | Value |
+|--------|-------|
+| Validation Name | Total Sales Amount |
+| Validation_id | VAL002 |
+| Source Type | Oracle |
+| Source Host Name | oracle-dwh |
+| Source Database Name | SALES_DB |
+| Source Schema Name | SALES |
+| Source Table Name | TRANSACTIONS |
+| Source Column Name | AMOUNT |
+| Target Type | Snowflake |
+| Target Host Name | snowflake-prod |
+| Target Database Name | ANALYTICS |
+| Target Table Name | TRANSACTIONS |
+| Target Column Name | AMOUNT |
+| Rule Type | SUM |
+| Threshold Type | PERCENTAGE |
+| Threshold Value | 0.01 |
 
 ### Example 3: Custom Expression
 
-```
-Field Name                    | Validation 3
-------------------------------|---------------------------
-Validation Name               | Weighted Revenue
-Validation_id                 | VAL003
-Source Type                   | SQLServer
-Source Host Name              | p8054
-Source Table Name             | Sales
-Source Column Expression      | SUM(Price * Quantity * Discount)
-Target Host Name              | snowflake-prod
-Target Table Name             | Sales_Summary
-Target Column Expression      | SUM(Price * Quantity * Discount)
-Rule Type                     | CUSTOM
-Threshold Type                | PERCENTAGE
-Threshold Value               | 0.02
-```
+Excel row:
+
+| Column | Value |
+|--------|-------|
+| Validation Name | Custom Revenue Calculation |
+| Validation_id | VAL005 |
+| Source Type | SQLServer |
+| Source Host Name | p8054 |
+| Source Database Name | SalesDB |
+| Source Table Name | Sales |
+| Source Column Expression | Price * Quantity |
+| Source Filter | REGION = 'WEST' |
+| Target Type | Netezza |
+| Target Host Name | nz-db-ut |
+| Target Database Name | cidpr |
+| Target Table Name | Sales_Fact |
+| Target Column Expression | Price * Quantity |
+| Target Filter | REGION = 'WEST' |
+| Rule Type | SUM |
+| Threshold Type | PERCENTAGE |
+| Threshold Value | 0.02 |
 
 ## Project Structure
 

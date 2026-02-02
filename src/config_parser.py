@@ -42,22 +42,19 @@ class ValidationConfig:
 
 
 class ConfigParser:
-    """Parser for Excel validation configuration files with vertical layout."""
+    """Parser for Excel validation configuration files with horizontal layout."""
 
-    # Expected row labels in Excel (case-insensitive)
-    # Note: Port fields are NOT in Excel - they are loaded from .env files
-    REQUIRED_ROWS = [
+    # Required column names in Excel (case-insensitive)
+    REQUIRED_COLUMNS = [
         'Validation Name',
         'Validation_id',
         'Source Type',
         'Source Host Name',
         'Source Database Name',
-        'Source Schema Name',
         'Source Table Name',
         'Target Type',
         'Target Host Name',
         'Target Database Name',
-        'Target Schema Name',
         'Target Table Name',
         'Rule Type',
     ]
@@ -75,11 +72,11 @@ class ConfigParser:
 
     def parse(self) -> List[ValidationConfig]:
         """
-        Parse Excel file with vertical layout (rows are fields, columns are validations).
+        Parse Excel file with horizontal layout (standard Excel format).
 
         Expected format:
-        Column A: Field names (Validation Name, Source Type, etc.)
-        Column B+: Validation data (each column is one validation)
+        Row 1: Column headers (Validation Name, Source Type, etc.)
+        Row 2+: Each row is one validation
 
         Returns:
             List of ValidationConfig objects
@@ -88,31 +85,39 @@ class ConfigParser:
             ConfigurationException: If parsing fails or validation errors occur
         """
         try:
-            # Read Excel file without treating first row as header
-            df = pd.read_excel(self.excel_path, sheet_name=self.sheet_name, header=None)
+            # Read Excel file with first row as headers
+            df = pd.read_excel(self.excel_path, sheet_name=self.sheet_name)
             logger.info(f"Loaded Excel file: {self.excel_path} (sheet: {self.sheet_name})")
 
-            if df.empty or df.shape[0] < 2 or df.shape[1] < 2:
-                raise ConfigurationException("Excel file must have at least 2 rows and 2 columns")
+            if df.empty:
+                raise ConfigurationException("Excel file has no data rows")
 
-            # First column contains field names
-            field_names = df.iloc[:, 0].tolist()
+            # Normalize column names (strip whitespace, but preserve case for lookup)
+            df.columns = df.columns.str.strip()
 
-            # Create a mapping of field names to row indices (case-insensitive)
-            field_map = {}
-            for idx, field in enumerate(field_names):
-                if pd.notna(field):
-                    field_map[str(field).strip().lower()] = idx
+            # Create case-insensitive column mapping
+            col_map = {col.lower(): col for col in df.columns}
 
-            # Parse each validation (each column starting from column 1)
+            # Verify required columns exist
+            missing_cols = []
+            for req_col in self.REQUIRED_COLUMNS:
+                if req_col.lower() not in col_map:
+                    missing_cols.append(req_col)
+
+            if missing_cols:
+                raise ConfigurationException(
+                    f"Missing required columns in Excel: {', '.join(missing_cols)}"
+                )
+
+            # Parse each row as a validation
             validations = []
-            for col_idx in range(1, df.shape[1]):
+            for idx, row in df.iterrows():
                 try:
-                    validation = self._parse_column(df, col_idx, field_map)
+                    validation = self._parse_row(row, col_map)
                     if validation:
                         validations.append(validation)
                 except Exception as e:
-                    logger.warning(f"Skipping column {col_idx + 1}: {str(e)}")
+                    logger.warning(f"Skipping row {idx + 2}: {str(e)}")  # +2 for header and 0-indexing
 
             logger.info(f"Parsed {len(validations)} validation configurations")
             return validations
@@ -122,28 +127,27 @@ class ConfigParser:
         except Exception as e:
             raise ConfigurationException(f"Failed to parse Excel file: {str(e)}")
 
-    def _parse_column(self, df: pd.DataFrame, col_idx: int, field_map: dict) -> Optional[ValidationConfig]:
+    def _parse_row(self, row: pd.Series, col_map: dict) -> Optional[ValidationConfig]:
         """
-        Parse a single column into a ValidationConfig object.
+        Parse a single row into a ValidationConfig object.
 
         Args:
-            df: DataFrame containing all data
-            col_idx: Column index to parse
-            field_map: Mapping of field names (lowercase) to row indices
+            row: DataFrame row
+            col_map: Mapping of lowercase column names to actual column names
 
         Returns:
-            ValidationConfig object or None if column should be skipped
+            ValidationConfig object or None if row should be skipped
         """
         def get_value(field_name: str, required: bool = False, default=None):
-            """Get value for a field from the current column."""
+            """Get value for a field from the current row."""
             field_key = field_name.lower()
-            if field_key not in field_map:
+            if field_key not in col_map:
                 if required:
-                    raise ConfigurationException(f"Required field '{field_name}' not found in Excel")
+                    raise ConfigurationException(f"Required column '{field_name}' not found in Excel")
                 return default
 
-            row_idx = field_map[field_key]
-            value = df.iloc[row_idx, col_idx]
+            actual_col = col_map[field_key]
+            value = row[actual_col]
 
             if pd.isna(value) or (isinstance(value, str) and not value.strip()):
                 if required:
@@ -159,8 +163,6 @@ class ConfigParser:
         # Source details
         source_type = str(get_value('source type', required=True)).strip()
         source_host = str(get_value('source host name', required=True)).strip()
-        source_port_val = get_value('source port', default=None)
-        source_port = int(source_port_val) if source_port_val is not None else None
         source_database = str(get_value('source database name', required=True)).strip()
         source_schema = str(get_value('source schema name', default='')).strip() or None
         source_table = str(get_value('source table name', required=True)).strip()
@@ -171,8 +173,6 @@ class ConfigParser:
         # Target details
         target_type = str(get_value('target type', required=True)).strip()
         target_host = str(get_value('target host name', required=True)).strip()
-        target_port_val = get_value('target port', default=None)
-        target_port = int(target_port_val) if target_port_val is not None else None
         target_database = str(get_value('target database name', required=True)).strip()
         target_schema = str(get_value('target schema name', default='')).strip() or None
         target_table = str(get_value('target table name', required=True)).strip()
@@ -191,6 +191,10 @@ class ConfigParser:
                 f"Invalid threshold_type '{threshold_type}' for {validation_id}. "
                 f"Must be one of: EXACT, PERCENTAGE, ABSOLUTE"
             )
+
+        # Ports are always None - loaded from .env files
+        source_port = None
+        target_port = None
 
         # Create and return ValidationConfig
         return ValidationConfig(
@@ -218,4 +222,3 @@ class ConfigParser:
             threshold_type=threshold_type,
             threshold_value=threshold_value
         )
-
