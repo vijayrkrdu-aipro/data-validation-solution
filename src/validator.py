@@ -278,13 +278,13 @@ class Validator:
                 difference=None,
                 percentage_diff=None,
                 source_details=self._build_details(
-                    config.source_connection,
+                    f"{config.source_type}@{config.source_host}:{config.source_port}",
                     config.source_database,
                     config.source_schema,
                     config.source_table
                 ),
                 target_details=self._build_details(
-                    config.target_connection,
+                    f"{config.target_type}@{config.target_host}:{config.target_port}",
                     config.target_database,
                     config.target_schema,
                     config.target_table
